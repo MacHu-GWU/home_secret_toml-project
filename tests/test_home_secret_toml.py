@@ -14,9 +14,7 @@ This test module covers all core components:
 import typing as T
 import pytest
 import tempfile
-import tomllib
 from pathlib import Path
-from unittest.mock import patch
 
 from home_secret_toml.home_secret_toml import (
     _deep_get,
@@ -28,17 +26,6 @@ from home_secret_toml.home_secret_toml import (
     DESCRIPTION,
     p_home_secret,
 )
-
-
-# Path to test fixtures
-dir_here = Path(__file__).absolute().parent
-dir_fixtures = dir_here / "fixtures"
-path_test_toml = dir_fixtures / "home_secret.toml"
-
-
-def load_test_data() -> dict[str, T.Any]:
-    """Load the test fixture TOML data."""
-    return tomllib.loads(path_test_toml.read_text(encoding="utf-8"))
 
 
 class Test_deep_get:
@@ -110,10 +97,9 @@ class TestToken:
         # Value should not be accessed until .v is called
         assert token.v == "secret_value"
 
-    def test_token_returns_correct_value(self):
+    def test_token_returns_correct_value(self, home_secret_data: dict[str, T.Any]):
         """Test that Token returns the correct value for its path."""
-        data = load_test_data()
-        token = Token(data=data, path="github.accounts.personal.account_id")
+        token = Token(data=home_secret_data, path="github.accounts.personal.account_id")
         assert token.v == "user123"
 
     def test_missing_path_raises_keyerror(self):
@@ -123,10 +109,11 @@ class TestToken:
         with pytest.raises(KeyError):
             _ = token.v
 
-    def test_token_with_inline_table(self):
+    def test_token_with_inline_table(self, home_secret_data: dict[str, T.Any]):
         """Test Token with inline table value."""
-        data = load_test_data()
-        token = Token(data=data, path="aws.accounts.prod.secrets.deployment.creds")
+        token = Token(
+            data=home_secret_data, path="aws.accounts.prod.secrets.deployment.creds"
+        )
         creds = token.v
         assert isinstance(creds, dict)
         assert "access_key" in creds
@@ -136,113 +123,57 @@ class TestToken:
 class TestHomeSecretToml:
     """Tests for the HomeSecretToml class."""
 
-    def test_data_property_loads_toml(self):
+    def test_data_property_loads_toml(self, home_secret_path: Path):
         """Test that data property loads TOML file correctly."""
-        # Copy test fixture to home location temporarily
-        original_content = None
-        if p_home_secret.exists():
-            original_content = p_home_secret.read_text(encoding="utf-8")
+        hs_test = HomeSecretToml(path=home_secret_path)
+        data = hs_test.data
 
-        try:
-            p_home_secret.write_text(
-                path_test_toml.read_text(encoding="utf-8"),
-                encoding="utf-8",
-            )
-            # Create new instance to avoid cached data
-            hs_test = HomeSecretToml()
-            data = hs_test.data
+        assert isinstance(data, dict)
+        # TOML parses as nested dict
+        assert "github" in data
+        assert data["github"]["accounts"]["personal"]["account_id"] == "user123"
 
-            assert isinstance(data, dict)
-            # TOML parses as nested dict
-            assert "github" in data
-            assert data["github"]["accounts"]["personal"]["account_id"] == "user123"
-        finally:
-            # Restore original content or remove test file
-            if original_content is not None:
-                p_home_secret.write_text(original_content, encoding="utf-8")
-
-    def test_v_method_returns_value(self):
+    def test_v_method_returns_value(self, home_secret_path: Path):
         """Test direct value access via v method."""
-        original_content = None
-        if p_home_secret.exists():
-            original_content = p_home_secret.read_text(encoding="utf-8")
+        hs_test = HomeSecretToml(path=home_secret_path)
 
-        try:
-            p_home_secret.write_text(
-                path_test_toml.read_text(encoding="utf-8"),
-                encoding="utf-8",
-            )
-            hs_test = HomeSecretToml()
+        assert hs_test.v("github.accounts.personal.account_id") == "user123"
+        assert hs_test.v("db.mysql_dev.port") == 3306
+        assert hs_test.v("db.mysql_dev.ssl_enabled") is True
 
-            assert hs_test.v("github.accounts.personal.account_id") == "user123"
-            assert hs_test.v("db.mysql_dev.port") == 3306
-            assert hs_test.v("db.mysql_dev.ssl_enabled") is True
-        finally:
-            if original_content is not None:
-                p_home_secret.write_text(original_content, encoding="utf-8")
-
-    def test_t_method_returns_token(self):
+    def test_t_method_returns_token(self, home_secret_path: Path):
         """Test token creation via t method."""
-        original_content = None
-        if p_home_secret.exists():
-            original_content = p_home_secret.read_text(encoding="utf-8")
+        hs_test = HomeSecretToml(path=home_secret_path)
 
-        try:
-            p_home_secret.write_text(
-                path_test_toml.read_text(encoding="utf-8"),
-                encoding="utf-8",
-            )
-            hs_test = HomeSecretToml()
-
-            token = hs_test.t("github.accounts.personal.account_id")
-            assert isinstance(token, Token)
-            assert token.v == "user123"
-        finally:
-            if original_content is not None:
-                p_home_secret.write_text(original_content, encoding="utf-8")
+        token = hs_test.t("github.accounts.personal.account_id")
+        assert isinstance(token, Token)
+        assert token.v == "user123"
 
     def test_file_not_found_raises_error(self):
         """Test FileNotFoundError when file missing."""
-        original_content = None
-        if p_home_secret.exists():
-            original_content = p_home_secret.read_text(encoding="utf-8")
-            p_home_secret.unlink()
+        hs_test = HomeSecretToml(path=Path("/nonexistent/path/secrets.toml"))
+        with pytest.raises(FileNotFoundError) as exc_info:
+            _ = hs_test.data
+        assert "secrets.toml" in str(exc_info.value)
 
-        try:
-            # Patch IS_SYNC to False and p_here_secret to not exist
-            with patch("home_secret_toml.home_secret_toml.IS_SYNC", False):
-                with patch(
-                    "home_secret_toml.home_secret_toml.p_here_secret",
-                    Path("/nonexistent/path"),
-                ):
-                    hs_test = HomeSecretToml()
-                    with pytest.raises(FileNotFoundError) as exc_info:
-                        _ = hs_test.data
-                    assert "home_secret.toml" in str(exc_info.value)
-        finally:
-            if original_content is not None:
-                p_home_secret.write_text(original_content, encoding="utf-8")
-
-    def test_v_method_caching(self):
+    def test_v_method_caching(self, home_secret_path: Path):
         """Test that v method results are cached."""
-        original_content = None
-        if p_home_secret.exists():
-            original_content = p_home_secret.read_text(encoding="utf-8")
+        hs_test = HomeSecretToml(path=home_secret_path)
 
-        try:
-            p_home_secret.write_text(
-                path_test_toml.read_text(encoding="utf-8"),
-                encoding="utf-8",
-            )
-            hs_test = HomeSecretToml()
+        # Call twice and verify it returns the same value (cached)
+        result1 = hs_test.v("github.accounts.personal.account_id")
+        result2 = hs_test.v("github.accounts.personal.account_id")
+        assert result1 == result2
 
-            # Call twice and verify it returns the same object (cached)
-            result1 = hs_test.v("github.accounts.personal.account_id")
-            result2 = hs_test.v("github.accounts.personal.account_id")
-            assert result1 == result2
-        finally:
-            if original_content is not None:
-                p_home_secret.write_text(original_content, encoding="utf-8")
+    def test_default_path_is_home_secret(self):
+        """Test that default path points to $HOME/home_secret.toml."""
+        hs_test = HomeSecretToml()
+        assert hs_test.path == p_home_secret
+
+    def test_custom_path(self, home_secret_path: Path):
+        """Test that custom path is used when specified."""
+        hs_test = HomeSecretToml(path=home_secret_path)
+        assert hs_test.path == home_secret_path
 
 
 class Test_walk:
@@ -318,10 +249,9 @@ class Test_walk:
         results = list(walk({}))
         assert results == []
 
-    def test_with_test_fixture(self):
+    def test_with_test_fixture(self, home_secret_data: dict[str, T.Any]):
         """Test walk with actual test fixture data."""
-        data = load_test_data()
-        results = list(walk(data))
+        results = list(walk(home_secret_data))
 
         # Should contain actual values
         result_keys = [key for key, _ in results]
@@ -340,112 +270,62 @@ class Test_walk:
 class Test_gen_enum_code:
     """Tests for the gen_enum_code function."""
 
-    def test_generates_valid_python(self):
+    def test_generates_valid_python(self, home_secret_path: Path):
         """Test that generated code is valid Python syntax."""
-        original_content = None
-        if p_home_secret.exists():
-            original_content = p_home_secret.read_text(encoding="utf-8")
+        hs_test = HomeSecretToml(path=home_secret_path)
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            temp_path = Path(f.name)
 
         try:
-            p_home_secret.write_text(
-                path_test_toml.read_text(encoding="utf-8"),
-                encoding="utf-8",
-            )
+            gen_enum_code(hs_instance=hs_test, output_path=temp_path)
 
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".py", delete=False
-            ) as f:
-                temp_path = Path(f.name)
-
-            try:
-                # Need to create fresh instance to pick up new data
-                with patch("home_secret_toml.home_secret_toml.hs", HomeSecretToml()):
-                    from home_secret_toml import home_secret_toml
-
-                    home_secret_toml.hs = HomeSecretToml()
-                    gen_enum_code(output_path=temp_path)
-
-                # Verify the generated file is valid Python by compiling it
-                generated_code = temp_path.read_text(encoding="utf-8")
-                compile(generated_code, temp_path, "exec")
-            finally:
-                temp_path.unlink()
+            # Verify the generated file is valid Python by compiling it
+            generated_code = temp_path.read_text(encoding="utf-8")
+            compile(generated_code, temp_path, "exec")
         finally:
-            if original_content is not None:
-                p_home_secret.write_text(original_content, encoding="utf-8")
+            temp_path.unlink()
 
-    def test_attribute_naming(self):
+    def test_attribute_naming(self, home_secret_path: Path):
         """Test that dots are converted to double underscores."""
-        original_content = None
-        if p_home_secret.exists():
-            original_content = p_home_secret.read_text(encoding="utf-8")
+        hs_test = HomeSecretToml(path=home_secret_path)
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            temp_path = Path(f.name)
 
         try:
-            p_home_secret.write_text(
-                path_test_toml.read_text(encoding="utf-8"),
-                encoding="utf-8",
-            )
+            gen_enum_code(hs_instance=hs_test, output_path=temp_path)
 
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".py", delete=False
-            ) as f:
-                temp_path = Path(f.name)
+            generated_code = temp_path.read_text(encoding="utf-8")
 
-            try:
-                from home_secret_toml import home_secret_toml
+            # Check that attribute names use double underscores
+            assert "github__accounts__personal__account_id" in generated_code
+            assert "db__mysql_dev__port" in generated_code
 
-                home_secret_toml.hs = HomeSecretToml()
-                gen_enum_code(output_path=temp_path)
-
-                generated_code = temp_path.read_text(encoding="utf-8")
-
-                # Check that attribute names use double underscores
-                assert "github__accounts__personal__account_id" in generated_code
-                assert "db__mysql_dev__port" in generated_code
-
-                # Check that original paths are preserved in the string
-                assert '"github.accounts.personal.account_id"' in generated_code
-            finally:
-                temp_path.unlink()
+            # Check that original paths are preserved in the string
+            assert '"github.accounts.personal.account_id"' in generated_code
         finally:
-            if original_content is not None:
-                p_home_secret.write_text(original_content, encoding="utf-8")
+            temp_path.unlink()
 
-    def test_generated_file_structure(self):
+    def test_generated_file_structure(self, home_secret_path: Path):
         """Test the structure of the generated file."""
-        original_content = None
-        if p_home_secret.exists():
-            original_content = p_home_secret.read_text(encoding="utf-8")
+        hs_test = HomeSecretToml(path=home_secret_path)
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            temp_path = Path(f.name)
 
         try:
-            p_home_secret.write_text(
-                path_test_toml.read_text(encoding="utf-8"),
-                encoding="utf-8",
-            )
+            gen_enum_code(hs_instance=hs_test, output_path=temp_path)
 
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".py", delete=False
-            ) as f:
-                temp_path = Path(f.name)
+            generated_code = temp_path.read_text(encoding="utf-8")
 
-            try:
-                from home_secret_toml import home_secret_toml
-
-                home_secret_toml.hs = HomeSecretToml()
-                gen_enum_code(output_path=temp_path)
-
-                generated_code = temp_path.read_text(encoding="utf-8")
-
-                # Check required components are present
-                assert "from home_secret_toml import hs" in generated_code
-                assert "class Secret:" in generated_code
-                assert "def _validate_secret():" in generated_code
-                assert 'if __name__ == "__main__":' in generated_code
-            finally:
-                temp_path.unlink()
+            # Check required components are present
+            assert "from home_secret_toml import hs" in generated_code
+            assert "class Secret:" in generated_code
+            assert "def _validate_secret():" in generated_code
+            assert 'if __name__ == "__main__":' in generated_code
         finally:
-            if original_content is not None:
-                p_home_secret.write_text(original_content, encoding="utf-8")
+            temp_path.unlink()
 
     def test_default_output_path(self):
         """Test that default output path is used when not specified."""

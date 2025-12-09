@@ -17,16 +17,8 @@ The module is built around three core concepts:
 
 **File Location Strategy**
 
-The secret file is expected to be located in one of two places:
-
-1. **Source of Truth**: ``${PROJECT_DIR}/home_secret.toml``
-    - Contains the master copy of secrets
-    - Should NOT be committed to version control
-    - Automatically copied to runtime location when present
-2. **Runtime Location**: ``${HOME}/home_secret.toml``
-    - Used by applications at runtime
-    - Automatically updated from source of truth
-    - Safe location accessible from any working directory
+By default, the secret file is expected to be located at ``${HOME}/home_secret.toml``.
+You can also specify a custom path when creating a HomeSecretToml instance.
 
 **Key Features**
 
@@ -36,6 +28,7 @@ The secret file is expected to be located in one of two places:
 - **Token-based Access**: Flexible reference system for delayed value resolution
 - **Robust Error Handling**: Clear error messages for missing or malformed secrets
 - **IDE Support**: Generated enum class provides full autocomplete support
+- **Configurable Path**: Custom secret file path can be specified for testing
 
 **Direct value access**::
 
@@ -48,41 +41,33 @@ The secret file is expected to be located in one of two places:
     token = hs.t("github.accounts.personal.users.dev.secrets.api_token.value")
     # Resolve the token when needed
     api_key = token.v
+
+**Custom path for testing**::
+
+    # Use a custom path for testing
+    hs_test = HomeSecretToml(path=Path("/path/to/test/secrets.toml"))
 """
 
 import typing as T
-import os
 import tomllib
 import textwrap
 import dataclasses
 from pathlib import Path
-from functools import cache, cached_property
+from functools import cached_property
 
 __version__ = "0.1.1"
 __license__ = "MIT"
 __author__ = "Sanhe Hu"
 
-# Configuration: Secret file name used in both locations
+# Configuration: Secret file name
 filename = "home_secret.toml"
 
-# Source of truth: Local development secrets file
-# This file contains the master copy of secrets and should NOT be committed to VCS
-p_here_secret = Path(filename).absolute()
+# Default runtime location: Home directory secrets file
+p_home_secret = Path.home() / filename
 
 # Path to the generated enum file containing flat attribute access to all secrets
 # This file is auto-generated and provides a simple dot-notation alternative
 p_here_enum = Path("home_secret_enum.py")
-
-# Runtime location: Home directory secrets file
-# This is where applications load secrets from during execution
-p_home_secret = Path.home() / filename
-
-# Boolean flag to control whether we want to sync the source secrets file to the runtime location
-IS_CI = "CI" in os.environ
-if IS_CI:
-    IS_SYNC = True
-else:
-    IS_SYNC = True
 
 
 def _deep_get(
@@ -147,38 +132,36 @@ class Token:
         return _deep_get(dct=self.data, path=self.path)
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass
 class HomeSecretToml:
     """
-    Main interface for loading and accessing secrets from the home_secret.toml file.
+    Main interface for loading and accessing secrets from a home_secret.toml file.
 
     This class provides the core functionality for the secrets management system:
 
-    - **Automatic File Management**: Handles copying from source to runtime location
+    - **Configurable Path**: Specify custom path for testing or different environments
     - **Lazy Loading**: TOML is only parsed when first accessed
     - **Caching**: Parsed TOML data is cached for subsequent access
     - **Flexible Access**: Supports both direct value access and token creation
+
+    :param path: Path to the TOML secrets file. Defaults to $HOME/home_secret.toml
     """
+
+    path: Path = dataclasses.field(default_factory=lambda: p_home_secret)
+    _cache_v: dict[str, T.Any] = dataclasses.field(default_factory=dict, repr=False)
+    _cache_t: dict[str, Token] = dataclasses.field(default_factory=dict, repr=False)
 
     @cached_property
     def data(self) -> dict[str, T.Any]:
         """
-        Load and cache the secret data from the ``home_secret.toml`` file.
-        """
-        # Synchronization: Copy source file to runtime location if it exists
-        # This allows developers to edit the local file and have changes automatically
-        # propagated to the runtime environment
-        if IS_SYNC:
-            if p_here_secret.exists():
-                p_home_secret.write_text(
-                    p_here_secret.read_text(encoding="utf-8"),
-                    encoding="utf-8",
-                )
-        if not p_home_secret.exists():
-            raise FileNotFoundError(f"Secret file not found at {p_home_secret}")
-        return tomllib.loads(p_home_secret.read_text(encoding="utf-8"))
+        Load and cache the secret data from the TOML file.
 
-    @cache
+        :raises FileNotFoundError: If the secrets file does not exist at the specified path
+        """
+        if not self.path.exists():
+            raise FileNotFoundError(f"Secret file not found at {self.path}")
+        return tomllib.loads(self.path.read_text(encoding="utf-8"))
+
     def v(self, path: str) -> T.Any:
         """
         Direct access to secret values using dot-separated path notation.
@@ -191,9 +174,10 @@ class HomeSecretToml:
 
             V stands for Value.
         """
-        return _deep_get(dct=self.data, path=path)
+        if path not in self._cache_v:
+            self._cache_v[path] = _deep_get(dct=self.data, path=path)
+        return self._cache_v[path]
 
-    @cache
     def t(self, path: str) -> Token:
         """
         Create a Token object for deferred access to secret values.
@@ -209,15 +193,18 @@ class HomeSecretToml:
 
             T stands for Token.
         """
-        return Token(
-            data=self.data,
-            path=path,
-        )
+        if path not in self._cache_t:
+            self._cache_t[path] = Token(
+                data=self.data,
+                path=path,
+            )
+        return self._cache_t[path]
 
 
 # Global instance: Single shared secrets manager for the entire application
 # This follows the singleton pattern to ensure consistent access to secrets
 # across all modules that import this file
+# Uses the default path: $HOME/home_secret.toml
 hs = HomeSecretToml()
 
 UNKNOWN = "..."
@@ -280,7 +267,10 @@ def walk(
             yield path, value
 
 
-def gen_enum_code(output_path: Path | None = None) -> None:
+def gen_enum_code(
+    hs_instance: HomeSecretToml | None = None,
+    output_path: Path | None = None,
+) -> None:
     """
     Generate a flat enumeration class providing direct attribute access to all secrets.
 
@@ -297,8 +287,12 @@ def gen_enum_code(output_path: Path | None = None) -> None:
     - Converts dots to double underscores for valid Python identifiers
     - Preserves the complete path hierarchy in the attribute name
 
+    :param hs_instance: HomeSecretToml instance to use for reading secrets.
+                        Defaults to the global hs instance.
     :param output_path: Path to write the generated file. Defaults to ./home_secret_enum.py
     """
+    if hs_instance is None:
+        hs_instance = hs
     if output_path is None:
         output_path = p_here_enum
 
@@ -319,7 +313,7 @@ def gen_enum_code(output_path: Path | None = None) -> None:
     ]
 
     # Extract all secret paths from the loaded TOML data
-    path_list = [path for path, _ in walk(hs.data)]
+    path_list = [path for path, _ in walk(hs_instance.data)]
 
     # Generate an attribute for each discovered secret path
     for path in path_list:
