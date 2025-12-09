@@ -5,6 +5,10 @@ from home_secret_toml import api
 
 def test():
     _ = api
+    _ = api.HomeSecretToml
+    _ = api.Token
+    _ = api.hs
+    _ = api.gen_enum_code
 
 
 if __name__ == "__main__":
