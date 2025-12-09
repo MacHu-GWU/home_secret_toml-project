@@ -22,6 +22,9 @@ from home_secret_toml.home_secret_toml import (
     HomeSecretToml,
     walk,
     gen_enum_code,
+    mask_value,
+    list_secrets,
+    generate_enum,
     UNKNOWN,
     DESCRIPTION,
     p_home_secret,
@@ -334,6 +337,285 @@ class Test_gen_enum_code:
         from home_secret_toml.home_secret_toml import p_here_enum
 
         assert p_here_enum.name == "home_secret_enum.py"
+
+
+class Test_mask_value:
+    """Tests for the mask_value function."""
+
+    def test_non_string_returns_asterisk(self):
+        """Test that non-string values return single asterisk."""
+        assert mask_value(123) == "*"
+        assert mask_value(3.14) == "*"
+        assert mask_value(True) == "*"
+        assert mask_value(None) == "*"
+        assert mask_value(["a", "b"]) == "*"
+        assert mask_value({"key": "value"}) == "*"
+
+    def test_short_string_returns_three_asterisks(self):
+        """Test that strings 8 chars or shorter return '***'."""
+        assert mask_value("") == "***"
+        assert mask_value("a") == "***"
+        assert mask_value("ab") == "***"
+        assert mask_value("abcdefgh") == "***"  # exactly 8 chars
+
+    def test_long_string_shows_first_and_last_two(self):
+        """Test that strings longer than 8 chars show first 2 and last 2."""
+        assert mask_value("abcdefghi") == "ab***hi"  # 9 chars
+        assert mask_value("admin@example.com") == "ad***om"  # 17 chars
+        assert mask_value("ghp_xxxxxxxxxxxx") == "gh***xx"  # 16 chars
+
+
+class Test_normalize_for_match:
+    """Tests for the _normalize_for_match function."""
+
+    def test_lowercase_conversion(self):
+        """Test that strings are converted to lowercase."""
+        from home_secret_toml.home_secret_toml import _normalize_for_match
+
+        assert _normalize_for_match("GitHub") == "github"
+        assert _normalize_for_match("AWS") == "aws"
+        assert _normalize_for_match("MyAPI") == "myapi"
+
+    def test_dash_to_underscore(self):
+        """Test that dashes are converted to underscores."""
+        from home_secret_toml.home_secret_toml import _normalize_for_match
+
+        assert _normalize_for_match("my-key") == "my_key"
+        assert _normalize_for_match("api-token-value") == "api_token_value"
+
+    def test_combined_normalization(self):
+        """Test that both lowercase and dash conversion work together."""
+        from home_secret_toml.home_secret_toml import _normalize_for_match
+
+        assert _normalize_for_match("My-API-Token") == "my_api_token"
+        assert _normalize_for_match("GitHub-Personal") == "github_personal"
+
+
+class Test_parse_query_facets:
+    """Tests for the _parse_query_facets function."""
+
+    def test_space_separator(self):
+        """Test that spaces separate facets."""
+        from home_secret_toml.home_secret_toml import _parse_query_facets
+
+        assert _parse_query_facets("github personal") == ["github", "personal"]
+        assert _parse_query_facets("aws  account") == ["aws", "account"]  # multiple spaces
+
+    def test_comma_separator(self):
+        """Test that commas separate facets."""
+        from home_secret_toml.home_secret_toml import _parse_query_facets
+
+        assert _parse_query_facets("github,personal") == ["github", "personal"]
+        assert _parse_query_facets("aws,,account") == ["aws", "account"]  # multiple commas
+
+    def test_mixed_separators(self):
+        """Test that spaces and commas can be mixed."""
+        from home_secret_toml.home_secret_toml import _parse_query_facets
+
+        assert _parse_query_facets("github, personal") == ["github", "personal"]
+        assert _parse_query_facets("aws ,account, token") == ["aws", "account", "token"]
+
+    def test_normalization_applied(self):
+        """Test that facets are normalized."""
+        from home_secret_toml.home_secret_toml import _parse_query_facets
+
+        assert _parse_query_facets("GitHub My-Token") == ["github", "my_token"]
+
+    def test_empty_query(self):
+        """Test that empty query returns empty list."""
+        from home_secret_toml.home_secret_toml import _parse_query_facets
+
+        assert _parse_query_facets("") == []
+        assert _parse_query_facets("   ") == []
+        assert _parse_query_facets(",,,") == []
+
+
+class Test_matches_all_facets:
+    """Tests for the _matches_all_facets function."""
+
+    def test_single_facet_match(self):
+        """Test matching with a single facet."""
+        from home_secret_toml.home_secret_toml import _matches_all_facets
+
+        assert _matches_all_facets("github.accounts.personal", ["github"]) is True
+        assert _matches_all_facets("github.accounts.personal", ["azure"]) is False
+
+    def test_multiple_facets_all_match(self):
+        """Test that all facets must match."""
+        from home_secret_toml.home_secret_toml import _matches_all_facets
+
+        assert _matches_all_facets("github.accounts.personal", ["github", "personal"]) is True
+        assert _matches_all_facets("github.accounts.personal", ["github", "work"]) is False
+
+    def test_case_insensitive(self):
+        """Test that matching is case-insensitive on the key side.
+
+        Note: facets are expected to be pre-normalized (lowercase) by _parse_query_facets.
+        """
+        from home_secret_toml.home_secret_toml import _matches_all_facets
+
+        # Key has mixed case, facet is normalized (lowercase)
+        assert _matches_all_facets("GitHub.Accounts.Personal", ["github"]) is True
+        assert _matches_all_facets("GITHUB.ACCOUNTS.PERSONAL", ["github"]) is True
+
+    def test_dash_underscore_equivalent(self):
+        """Test that dashes and underscores are treated as equivalent.
+
+        Note: facets are expected to be pre-normalized (dashes -> underscores) by _parse_query_facets.
+        """
+        from home_secret_toml.home_secret_toml import _matches_all_facets
+
+        # Key has underscore, facet is normalized (underscore)
+        assert _matches_all_facets("my_api_token", ["my_api"]) is True
+        # Key has dash, facet is normalized (underscore) - key is also normalized during matching
+        assert _matches_all_facets("my-api-token", ["my_api"]) is True
+
+    def test_empty_facets_matches_all(self):
+        """Test that empty facets list matches any key."""
+        from home_secret_toml.home_secret_toml import _matches_all_facets
+
+        assert _matches_all_facets("any.key.here", []) is True
+
+
+class Test_list_secrets:
+    """Tests for the list_secrets function."""
+
+    def test_list_secrets_returns_masked_values(self, home_secret_path: Path):
+        """Test that list_secrets returns secrets with masked values."""
+        results = list_secrets(path=home_secret_path)
+
+        # Should return list of tuples
+        assert isinstance(results, list)
+        assert len(results) > 0
+
+        # All items should be (key, masked_value) tuples
+        for key, masked_value in results:
+            assert isinstance(key, str)
+            assert isinstance(masked_value, str)
+
+        # Check specific entries
+        result_dict = dict(results)
+        assert "github.accounts.personal.account_id" in result_dict
+        assert result_dict["github.accounts.personal.account_id"] == "***"  # user123 is 7 chars
+
+    def test_list_secrets_with_query_filters_results(self, home_secret_path: Path):
+        """Test that list_secrets with query filters to matching keys."""
+        results = list_secrets(path=home_secret_path, query="github")
+
+        # All keys should contain "github"
+        for key, _ in results:
+            assert "github" in key
+
+        # Should not contain non-matching entries
+        result_keys = [key for key, _ in results]
+        assert not any("aws" in key for key in result_keys)
+        assert not any("db" in key for key in result_keys)
+
+    def test_list_secrets_case_insensitive(self, home_secret_path: Path):
+        """Test that query matching is case-insensitive."""
+        results_lower = list_secrets(path=home_secret_path, query="github")
+        results_upper = list_secrets(path=home_secret_path, query="GITHUB")
+        results_mixed = list_secrets(path=home_secret_path, query="GitHub")
+
+        assert len(results_lower) > 0
+        assert results_lower == results_upper
+        assert results_lower == results_mixed
+
+    def test_list_secrets_dash_underscore_equivalent(self, home_secret_path: Path):
+        """Test that dashes and underscores are treated as equivalent in queries."""
+        # The fixture has keys like "db.mysql_dev.port"
+        results_underscore = list_secrets(path=home_secret_path, query="mysql_dev")
+        results_dash = list_secrets(path=home_secret_path, query="mysql-dev")
+
+        assert len(results_underscore) > 0
+        assert results_underscore == results_dash
+
+    def test_list_secrets_multi_facet_query(self, home_secret_path: Path):
+        """Test that multiple facets (space/comma separated) use AND logic."""
+        # Query with multiple facets - all must match
+        results = list_secrets(path=home_secret_path, query="github personal")
+
+        # All results should contain both "github" AND "personal"
+        for key, _ in results:
+            key_lower = key.lower()
+            assert "github" in key_lower
+            assert "personal" in key_lower
+
+    def test_list_secrets_multi_facet_comma_separated(self, home_secret_path: Path):
+        """Test that comma-separated facets work."""
+        results_space = list_secrets(path=home_secret_path, query="github personal")
+        results_comma = list_secrets(path=home_secret_path, query="github,personal")
+
+        assert results_space == results_comma
+
+    def test_list_secrets_with_no_matches_returns_empty(self, home_secret_path: Path):
+        """Test that list_secrets with non-matching query returns empty list."""
+        results = list_secrets(path=home_secret_path, query="nonexistent_query_string")
+
+        assert results == []
+
+    def test_list_secrets_file_not_found(self):
+        """Test that list_secrets raises FileNotFoundError for missing file."""
+        with pytest.raises(FileNotFoundError):
+            list_secrets(path=Path("/nonexistent/path/secrets.toml"))
+
+
+class Test_generate_enum:
+    """Tests for the generate_enum function."""
+
+    def test_generate_enum_creates_file(self, home_secret_path: Path, tmp_path):
+        """Test that generate_enum creates the enum file."""
+        output_file = tmp_path / "home_secret_enum.py"
+        result_path = generate_enum(path=home_secret_path, output=output_file)
+
+        assert result_path == output_file
+        assert output_file.exists()
+        content = output_file.read_text()
+        assert "class Secret:" in content
+
+    def test_generate_enum_to_directory(self, home_secret_path: Path, tmp_path):
+        """Test that generate_enum to directory creates file with default name."""
+        result_path = generate_enum(path=home_secret_path, output=tmp_path)
+
+        expected_file = tmp_path / "home_secret_enum.py"
+        assert result_path == expected_file
+        assert expected_file.exists()
+
+    def test_generate_enum_no_overwrite_by_default(
+        self, home_secret_path: Path, tmp_path
+    ):
+        """Test that generate_enum raises FileExistsError when file exists."""
+        output_file = tmp_path / "home_secret_enum.py"
+        output_file.write_text("existing content")
+
+        with pytest.raises(FileExistsError) as exc_info:
+            generate_enum(path=home_secret_path, output=output_file)
+        assert "already exists" in str(exc_info.value)
+
+        # Original content should be preserved
+        assert output_file.read_text() == "existing content"
+
+    def test_generate_enum_with_overwrite(self, home_secret_path: Path, tmp_path):
+        """Test that generate_enum overwrites when overwrite=True."""
+        output_file = tmp_path / "home_secret_enum.py"
+        output_file.write_text("existing content")
+
+        result_path = generate_enum(
+            path=home_secret_path, output=output_file, overwrite=True
+        )
+
+        assert result_path == output_file
+        # Content should be replaced
+        content = output_file.read_text()
+        assert "class Secret:" in content
+
+    def test_generate_enum_file_not_found(self, tmp_path):
+        """Test that generate_enum raises FileNotFoundError for missing secrets file."""
+        output_file = tmp_path / "home_secret_enum.py"
+        with pytest.raises(FileNotFoundError):
+            generate_enum(
+                path=Path("/nonexistent/path/secrets.toml"), output=output_file
+            )
 
 
 if __name__ == "__main__":

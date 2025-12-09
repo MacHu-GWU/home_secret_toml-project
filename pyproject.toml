@@ -105,6 +105,7 @@ Download = "https://pypi.org/pypi/home-secret-toml#files"
 
 # For command line interface, read: https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#creating-executable-scripts
 [project.scripts]
+hst = "home_secret_toml.cli:run"
 
 [tool.poetry.requires-plugins]
 poetry-plugin-export = ">=1.9.0,<2.0.0"

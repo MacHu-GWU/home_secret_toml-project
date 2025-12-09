@@ -49,6 +49,8 @@ You can also specify a custom path when creating a HomeSecretToml instance.
 """
 
 import typing as T
+import sys
+import argparse
 import tomllib
 import textwrap
 import dataclasses
@@ -345,5 +347,274 @@ def gen_enum_code(
     output_path.write_text("\n".join(lines), encoding="utf-8")
 
 
+# ------------------------------------------------------------------------------
+# CLI Functions
+# ------------------------------------------------------------------------------
+def mask_value(value: T.Any) -> str:
+    """
+    Mask a secret value for safe display.
+
+    **Masking Rules**:
+
+    - Non-string values: replaced with "*"
+    - Strings longer than 8 characters: show first 2 and last 2 chars with "***" in between
+    - Strings 8 characters or shorter: replaced with "***"
+
+    :param value: The value to mask
+
+    :return: Masked string representation
+    """
+    if not isinstance(value, str):
+        return "*"
+    if len(value) > 8:
+        return f"{value[:2]}***{value[-2:]}"
+    else:
+        return "***"
+
+
+def _normalize_for_match(s: str) -> str:
+    """
+    Normalize a string for matching by converting to lowercase and replacing dashes with underscores.
+
+    :param s: The string to normalize
+
+    :return: Normalized string
+    """
+    return s.lower().replace("-", "_")
+
+
+def _parse_query_facets(query: str) -> list[str]:
+    """
+    Parse a query string into individual search facets.
+
+    Splits on spaces and commas, filters empty strings, and normalizes each facet.
+
+    :param query: The query string to parse
+
+    :return: List of normalized facets
+    """
+    # Replace commas with spaces, then split on whitespace
+    parts = query.replace(",", " ").split()
+    # Normalize each non-empty part
+    return [_normalize_for_match(part) for part in parts if part]
+
+
+def _matches_all_facets(key: str, facets: list[str]) -> bool:
+    """
+    Check if a key matches all search facets.
+
+    :param key: The key to check (will be normalized)
+    :param facets: List of normalized facets that must all be substrings
+
+    :return: True if all facets are found in the normalized key
+    """
+    normalized_key = _normalize_for_match(key)
+    return all(facet in normalized_key for facet in facets)
+
+
+def list_secrets(
+    path: Path | None = None,
+    query: str | None = None,
+) -> list[tuple[str, str]]:
+    """
+    List all secrets with masked values.
+
+    This is the underlying function for the ``hst ls`` command.
+
+    **Query Matching Rules**:
+
+    - Case-insensitive matching
+    - Dashes (-) and underscores (_) are treated as equivalent
+    - Spaces and commas in query are treated as separators for multiple facets
+    - All facets must match (AND logic) for a key to be included
+
+    :param path: Path to the TOML secrets file. Defaults to $HOME/home_secret.toml
+    :param query: Optional query string to filter keys. Supports multiple facets
+        separated by spaces or commas.
+
+    :return: List of (key, masked_value) tuples
+    """
+    if path is None:
+        path = p_home_secret
+
+    hs_instance = HomeSecretToml(path=path)
+    data = hs_instance.data
+
+    results = list(walk(data))
+
+    if query:
+        facets = _parse_query_facets(query)
+        if facets:
+            results = [(key, value) for key, value in results if _matches_all_facets(key, facets)]
+
+    return [(key, mask_value(value)) for key, value in results]
+
+
+def cmd_ls(
+    path: Path | None = None,
+    query: str | None = None,
+) -> None:  # pragma: no cover
+    """
+    CLI wrapper for list_secrets. Prints results to stdout.
+
+    :param path: Path to the TOML secrets file. Defaults to $HOME/home_secret.toml
+    :param query: Optional substring to filter keys
+    """
+    try:
+        results = list_secrets(path=path, query=query)
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    if not results:
+        if query:
+            print(f'No secrets found matching "{query}"')
+        else:
+            print("No secrets found")
+        return
+
+    for key, masked_value in results:
+        print(f'{key} = "{masked_value}"')
+
+
+def generate_enum(
+    path: Path | None = None,
+    output: Path | None = None,
+    overwrite: bool = False,
+) -> Path:
+    """
+    Generate the home_secret_enum.py file.
+
+    This is the underlying function for the ``hst gen-enum`` command.
+
+    :param path: Path to the TOML secrets file. Defaults to $HOME/home_secret.toml
+    :param output: Output path (directory or file). Defaults to ./home_secret_enum.py
+    :param overwrite: If True, allow overwriting existing files
+
+    :raises FileExistsError: If output file exists and overwrite is False
+    :raises FileNotFoundError: If secrets file does not exist
+
+    :return: The path where the enum file was written
+    """
+    if path is None:
+        path = p_home_secret
+
+    # Determine output path
+    if output is None:
+        output_path = Path("home_secret_enum.py")
+    else:
+        output_path = output
+        if output_path.is_dir():
+            output_path = output_path / "home_secret_enum.py"
+        elif not output_path.suffix == ".py":
+            # Treat as directory if not ending with .py
+            output_path = output_path / "home_secret_enum.py"
+
+    # Check if file exists and handle overwrite logic
+    if output_path.exists() and not overwrite:
+        raise FileExistsError(
+            f"{output_path} already exists. Use --overwrite to replace it."
+        )
+
+    # Ensure parent directory exists
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    hs_instance = HomeSecretToml(path=path)
+    gen_enum_code(hs_instance=hs_instance, output_path=output_path)
+
+    return output_path
+
+
+def cmd_gen_enum(
+    path: Path | None = None,
+    output: Path | None = None,
+    overwrite: bool = False,
+) -> None:  # pragma: no cover
+    """
+    CLI wrapper for generate_enum. Prints result to stdout.
+
+    :param path: Path to the TOML secrets file. Defaults to $HOME/home_secret.toml
+    :param output: Output path (directory or file). Defaults to ./home_secret_enum.py
+    :param overwrite: If True, allow overwriting existing files
+    """
+    try:
+        output_path = generate_enum(path=path, output=output, overwrite=overwrite)
+        print(f"Generated: {output_path}")
+    except FileExistsError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+
+def main() -> None:  # pragma: no cover
+    """
+    Main CLI entry point for the hst command.
+    """
+    parser = argparse.ArgumentParser(
+        prog="hst",
+        description="Home Secret TOML - Local credential management CLI",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
+
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # ls subcommand
+    ls_parser = subparsers.add_parser(
+        "ls",
+        help="List secrets with masked values",
+    )
+    ls_parser.add_argument(
+        "--path",
+        type=Path,
+        default=None,
+        help="Path to the TOML secrets file. Defaults to ~/home_secret.toml",
+    )
+    ls_parser.add_argument(
+        "--query",
+        type=str,
+        default=None,
+        help="Optional substring to filter secret keys",
+    )
+
+    # gen-enum subcommand
+    gen_enum_parser = subparsers.add_parser(
+        "gen-enum",
+        help="Generate home_secret_enum.py file",
+    )
+    gen_enum_parser.add_argument(
+        "--path",
+        type=Path,
+        default=None,
+        help="Path to the TOML secrets file. Defaults to ~/home_secret.toml",
+    )
+    gen_enum_parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Output path (directory or .py file). Defaults to ./home_secret_enum.py",
+    )
+    gen_enum_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing file",
+    )
+
+    args = parser.parse_args()
+
+    if args.command is None:
+        parser.print_help()
+        sys.exit(0)
+    elif args.command == "ls":
+        cmd_ls(path=args.path, query=args.query)
+    elif args.command == "gen-enum":
+        cmd_gen_enum(path=args.path, output=args.output, overwrite=args.overwrite)
+
+
 if __name__ == "__main__":
-    gen_enum_code()
+    main()
