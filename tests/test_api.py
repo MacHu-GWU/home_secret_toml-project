@@ -8,6 +8,7 @@ def test():
     _ = api.HomeSecretToml
     _ = api.Token
     _ = api.hs
+    _ = api.list_secrets
     _ = api.gen_enum_code
 
 

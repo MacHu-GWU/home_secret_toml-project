@@ -4,6 +4,11 @@
 
 HOME Secret TOML is a local credential management system that stores sensitive development credentials in a structured TOML configuration file. It provides a flat, human-readable format for organizing secrets across multiple service providers, accounts, and users, with Python integration for secure programmatic access.
 
+**Dual Usage Modes**:
+
+- **Single-File Distribution**: The `home_secret_toml.py` module is self-contained and can be directly copied into any project. It has zero external dependencies (uses only Python 3.11+ standard library).
+- **Package Installation**: Install via `pip install home_secret_toml` for use as a proper Python package with CLI support.
+
 ## 2. Core Philosophy
 
 ### 2.1 Flat Key Structure
@@ -20,6 +25,8 @@ This design choice provides:
 - **Easy Navigation**: Text search instantly locates any credential
 - **Comment Support**: TOML natively supports `#` comments for documentation
 - **Reduced Complexity**: No nested brackets or indentation to manage
+
+**Note**: While TOML keys appear flat in the file, the TOML parser interprets dotted keys as nested dictionaries internally. The library handles this transparently.
 
 ### 2.2 Alias-Based Security
 
@@ -40,6 +47,18 @@ All credentials consolidate into a single file located at `$HOME/home_secret.tom
 - Environment variable duplication
 - Inconsistent credential storage patterns
 
+### 2.4 Zero External Dependencies
+
+The library uses only Python 3.11+ standard library modules:
+
+- `tomllib` for TOML parsing (built into Python 3.11+)
+- `dataclasses` for data structures
+- `pathlib` for path handling
+- `argparse` for CLI
+- `typing` for type hints
+
+This ensures the single-file distribution works without any `pip install`.
+
 ## 3. File Format Specification
 
 ### 3.1 File Location
@@ -52,13 +71,14 @@ $HOME/home_secret.toml
 
 Where `$HOME` represents the user's home directory (e.g., `/Users/username` on macOS, `/home/username` on Linux, `C:\Users\username` on Windows).
 
+A custom path can be specified when creating a `HomeSecretToml` instance for testing or alternative configurations.
+
 ### 3.2 Key Format
 
 Keys follow a dot-separated path notation with the following constraints:
 
 - Keys contain only lowercase letters, numbers, and underscores
 - Path segments are separated by dots (`.`)
-- **No nested tables allowed** - all keys must be at the root level of the TOML file
 - Keys are case-sensitive
 
 Valid key patterns:
@@ -172,44 +192,43 @@ aws.accounts.prod.users.ci_bot.secrets.deploy.creds = { access_key = "AKIAXXXXXX
 
 ### 4.1 HomeSecretToml Class
 
-The `HomeSecretToml` class is the primary interface for loading and accessing secrets from the TOML file.
+The `HomeSecretToml` class is the primary interface for loading and accessing secrets from the TOML file. It is implemented as a `@dataclass`.
 
 #### 4.1.1 Constructor
 
 ```python
+@dataclass
 class HomeSecretToml:
-    def __init__(self, path: Optional[Path] = None):
-        """
-        Initialize the HomeSecretToml instance.
+    """
+    Main interface for loading and accessing secrets from a home_secret.toml file.
 
-        Args:
-            path: Optional custom path to the TOML file.
-                  Defaults to $HOME/home_secret.toml
-        """
+    Args:
+        path: Path to the TOML secrets file.
+              Defaults to $HOME/home_secret.toml
+    """
+    path: Path = field(default_factory=lambda: p_home_secret)
 ```
 
 #### 4.1.2 Properties
 
-**`data`** (read-only)
+**`data`** (read-only, cached)
 
 ```python
-@property
+@cached_property
 def data(self) -> dict[str, Any]:
     """
-    Load and cache the secret data from the home_secret.toml file.
+    Load and cache the secret data from the TOML file.
 
     Returns:
-        A dictionary representation of the TOML file where dot-separated
-        keys are preserved as flattened string keys.
+        A nested dictionary representation of the TOML file.
+        TOML parses dotted keys like "a.b.c" as nested dicts {"a": {"b": {"c": value}}}.
 
     Raises:
         FileNotFoundError: If the secrets file does not exist
-        toml.TomlDecodeError: If the TOML file is malformed
 
     Note:
-        This property is lazy-loaded and cached. The file is only read
-        from disk on first access. The returned dictionary MUST NOT be
-        modified by the caller.
+        This property is lazy-loaded and cached via @cached_property.
+        The file is only read from disk on first access.
     """
 ```
 
@@ -233,7 +252,8 @@ def v(self, path: str) -> Any:
         KeyError: If the specified path does not exist in the data
 
     Note:
-        V stands for "Value". Results are cached for performance.
+        V stands for "Value". Results are cached in an internal dictionary
+        for performance on repeated access.
     """
 ```
 
@@ -251,14 +271,15 @@ def t(self, path: str) -> Token:
         A Token object that can be resolved later via its .v property
 
     Note:
-        T stands for "Token". Useful for dependency injection and
-        configuration objects where value resolution should be deferred.
+        T stands for "Token". Tokens are cached in an internal dictionary.
+        Useful for dependency injection and configuration objects where
+        value resolution should be deferred.
     """
 ```
 
 ### 4.2 Token Class
 
-The `Token` class represents a lazy reference to a secret value.
+The `Token` class represents a lazy reference to a secret value. It is implemented as a `@dataclass`.
 
 ```python
 @dataclass
@@ -288,7 +309,7 @@ class Token:
 
 ### 4.3 Global Instance
 
-The module SHALL provide a pre-configured global instance for convenience:
+The module provides a pre-configured global instance for convenience:
 
 ```python
 hs = HomeSecretToml()
@@ -304,29 +325,37 @@ api_key = hs.v("github.accounts.personal.users.dev.secrets.api_token.value")
 
 ### 4.4 Enum Code Generation
 
-The library SHALL provide a function to generate a Python module containing enumerated access to all secrets.
+The library provides functions to generate a Python module containing enumerated access to all secrets.
 
-**`gen_enum_code(output_path: Optional[Path] = None) -> None`**
+**`gen_enum_code(hs_instance: HomeSecretToml | None = None, output_path: Path | None = None) -> None`**
+
+Low-level function that generates the enum code file.
+
+**`generate_enum(path: Path | None = None, output: Path | None = None, overwrite: bool = False) -> Path`**
+
+High-level function for the CLI that handles path resolution and error checking.
 
 ```python
-def gen_enum_code(output_path: Optional[Path] = None) -> None:
+def generate_enum(
+    path: Path | None = None,
+    output: Path | None = None,
+    overwrite: bool = False,
+) -> Path:
     """
-    Generate a Python module with enumerated secret path constants.
-
-    This function creates a Secret class where each secret path becomes
-    a class attribute, enabling IDE autocomplete and static analysis.
+    Generate the home_secret_enum.py file.
 
     Args:
-        output_path: Path to write the generated file.
-                     Defaults to ./home_secret_enum.py
+        path: Path to the TOML secrets file. Defaults to $HOME/home_secret.toml
+        output: Output path (directory or file). Defaults to ./home_secret_enum.py
+                If a directory is provided, creates home_secret_enum.py in that directory.
+        overwrite: If True, allow overwriting existing files
 
-    Generated File Structure:
-        - A Secret class with attributes for each secret path
-        - Attribute names are derived from paths by:
-          1. Replacing dots with double underscores
-          2. Using only valid Python identifier characters
-        - Each attribute is a Token object for lazy value resolution
-        - A _validate_secret() function to verify all paths are valid
+    Returns:
+        The path where the enum file was written
+
+    Raises:
+        FileExistsError: If output file exists and overwrite is False
+        FileNotFoundError: If secrets file does not exist
     """
 ```
 
@@ -378,7 +407,7 @@ The transformation from TOML path to Python attribute name:
 
 Rules:
 1. All dots (`.`) are replaced with double underscores (`__`)
-2. The full path is preserved (unlike the JSON version which removes the `providers.` prefix, TOML version keeps the full path since there is no `providers` wrapper)
+2. The full path is preserved
 
 #### 4.4.3 Filtering Rules
 
@@ -387,36 +416,204 @@ The following entries SHALL be excluded from the generated enum:
 1. Entries where the value equals the placeholder string `"..."`
 2. Entries where the key ends with `.description` (metadata only)
 
-## 5. File Synchronization Behavior
+### 4.5 Helper Functions
 
-### 5.1 Development Workflow Support
+**`walk(dct: dict, _parent_path: str = "") -> Iterable[tuple[str, Any]]`**
 
-The library MAY support automatic synchronization from a project-local file to the home directory location:
+Recursively traverses a nested dictionary and yields all leaf paths and values. Filters out `description` keys and placeholder values (`"..."`).
+
+**`list_secrets(path: Path | None = None, query: str | None = None) -> list[tuple[str, str]]`**
+
+Lists all secrets with masked values. This is the underlying function for the `hst ls` CLI command.
+
+**`mask_value(value: Any) -> str`**
+
+Masks a secret value for safe display:
+- Non-string values: `"*"`
+- Strings ≤ 8 characters: `"***"`
+- Strings > 8 characters: `"ab***yz"` (first 2 and last 2 chars shown)
+
+## 5. Command-Line Interface (CLI)
+
+The library provides a CLI tool `hst` (Home Secret TOML) for managing secrets from the command line.
+
+### 5.1 Installation
+
+The CLI is available after installing the package:
+
+```bash
+pip install home_secret_toml
+hst --help
+```
+
+### 5.2 Global Options
 
 ```
-${PROJECT_DIR}/home_secret.toml  →  $HOME/home_secret.toml
+hst --version    Show version information
+hst --help       Show help message
 ```
 
-This enables developers to:
-1. Keep a project-specific secrets file (excluded from version control)
-2. Have it automatically copied to the runtime location
+### 5.3 Commands
 
-### 5.2 Synchronization Configuration
+#### 5.3.1 `hst ls` - List Secrets
 
-The synchronization behavior SHALL be controllable:
+List all secrets with their values masked for security.
+
+```bash
+hst ls [--path PATH] [--query QUERY]
+```
+
+**Options:**
+- `--path PATH`: Path to the TOML secrets file. Defaults to `~/home_secret.toml`
+- `--query QUERY`: Filter secrets by key substring
+
+**Query Matching Rules:**
+- Case-insensitive matching
+- Dashes (`-`) and underscores (`_`) are treated as equivalent
+- Spaces and commas in query are treated as separators for multiple facets
+- All facets must match (AND logic) for a key to be included
+
+**Examples:**
+
+```bash
+# List all secrets
+hst ls
+
+# List secrets from a custom file
+hst ls --path /path/to/secrets.toml
+
+# Filter by single term (case-insensitive)
+hst ls --query github
+hst ls --query GITHUB
+
+# Filter with multiple terms (AND logic)
+hst ls --query "github personal"
+hst ls --query "github,personal"
+
+# Dash and underscore are equivalent
+hst ls --query "mysql-dev"   # matches mysql_dev
+hst ls --query "mysql_dev"   # matches mysql-dev
+```
+
+**Output Format:**
+
+```
+github.accounts.personal.account_id = "***"
+github.accounts.personal.users.dev.secrets.api_token.value = "gh***xx"
+aws.accounts.prod.account_id = "*"
+```
+
+#### 5.3.2 `hst gen-enum` - Generate Enum File
+
+Generate a Python file with enumerated access to all secrets.
+
+```bash
+hst gen-enum [--path PATH] [--output OUTPUT] [--overwrite]
+```
+
+**Options:**
+- `--path PATH`: Path to the TOML secrets file. Defaults to `~/home_secret.toml`
+- `--output OUTPUT`: Output path (directory or .py file). Defaults to `./home_secret_enum.py`
+- `--overwrite`: Overwrite existing file if it exists
+
+**Examples:**
+
+```bash
+# Generate enum file in current directory
+hst gen-enum
+
+# Generate from custom secrets file
+hst gen-enum --path /path/to/secrets.toml
+
+# Generate to a specific location
+hst gen-enum --output /path/to/output.py
+
+# Generate to a directory (creates home_secret_enum.py in that directory)
+hst gen-enum --output /path/to/dir/
+
+# Overwrite existing file
+hst gen-enum --overwrite
+```
+
+## 6. Usage Scenarios
+
+### 6.1 Single-File Distribution (Copy-Paste)
+
+For projects where you want to avoid adding dependencies:
+
+1. Copy `home_secret_toml/home_secret_toml.py` to your project
+2. Import and use directly:
 
 ```python
-# Module-level configuration
-IS_SYNC = True  # Enable/disable synchronization
+from home_secret_toml import hs
 
-# Path configuration
-p_here_secret = Path("home_secret.toml").absolute()  # Source location
-p_home_secret = Path.home() / "home_secret.toml"     # Runtime location
+api_key = hs.v("github.accounts.personal.users.dev.secrets.api_token.value")
 ```
 
-## 6. Error Handling
+**Requirements:**
+- Python 3.11+ (for `tomllib` standard library)
+- No pip install needed
 
-### 6.1 File Not Found
+### 6.2 Package Installation
+
+For projects that prefer proper package management:
+
+```bash
+pip install home_secret_toml
+```
+
+```python
+from home_secret_toml import hs
+
+api_key = hs.v("github.accounts.personal.users.dev.secrets.api_token.value")
+```
+
+**Benefits:**
+- CLI tool `hst` available
+- Proper package structure
+- Easy updates via pip
+
+### 6.3 Custom Path for Testing
+
+```python
+from pathlib import Path
+from home_secret_toml import HomeSecretToml
+
+# Use a test secrets file
+hs_test = HomeSecretToml(path=Path("tests/fixtures/test_secrets.toml"))
+api_key = hs_test.v("github.accounts.personal.account_id")
+```
+
+### 6.4 Token-Based Configuration
+
+```python
+from home_secret_toml import hs
+
+class MyConfig:
+    github_token = hs.t("github.accounts.personal.users.dev.secrets.api_token.value")
+    aws_access_key = hs.t("aws.accounts.prod.secrets.deploy.creds")
+
+# Values are resolved only when accessed
+config = MyConfig()
+print(config.github_token.v)  # Resolves here
+```
+
+### 6.5 IDE Autocomplete with Generated Enum
+
+```bash
+hst gen-enum
+```
+
+```python
+from home_secret_enum import Secret
+
+# Full IDE autocomplete support
+api_key = Secret.github__accounts__personal__users__dev__secrets__api_token__value.v
+```
+
+## 7. Error Handling
+
+### 7.1 File Not Found
 
 When the secrets file does not exist at the expected location:
 
@@ -424,39 +621,50 @@ When the secrets file does not exist at the expected location:
 raise FileNotFoundError(f"Secret file not found at {path}")
 ```
 
-### 6.2 Invalid Path Access
+### 7.2 Invalid Path Access
 
 When accessing a path that does not exist in the data:
 
 ```python
-raise KeyError(f"Key '{path}' not found in the provided data.")
+raise KeyError(f"Key '{current_path}' not found in the provided data.")
 ```
 
-The error message SHALL include the full path that was attempted.
+The error message includes the partial path that was successfully traversed before failure.
 
-### 6.3 TOML Parse Errors
+### 7.3 File Already Exists (Enum Generation)
 
-When the TOML file contains syntax errors, the standard `toml.TomlDecodeError` (or equivalent from the TOML parsing library) SHALL be raised with line number information.
+When generating enum file and it already exists:
 
-## 7. Security Considerations
+```python
+raise FileExistsError(f"{output_path} already exists. Use --overwrite to replace it.")
+```
 
-### 7.1 File Permissions
+## 8. Security Considerations
+
+### 8.1 File Permissions
 
 The secrets file SHOULD have restricted permissions:
 - Unix/Linux/macOS: `0600` (owner read/write only)
 - Windows: Accessible only to the current user
 
-### 7.2 Version Control
+### 8.2 Version Control
 
 The following files MUST be added to `.gitignore`:
 - `home_secret.toml` (the actual secrets file)
 - `home_secret_enum.py` (generated enum may contain path hints)
 
-### 7.3 Logging
+### 8.3 Value Masking
 
-The library SHALL NOT log secret values. If logging is implemented, only paths (not values) may be logged.
+The CLI `hst ls` command always masks secret values:
+- Non-string values: `*`
+- Short strings (≤8 chars): `***`
+- Long strings (>8 chars): `ab***yz` (first 2 and last 2 chars)
 
-## 8. Comparison with JSON Format
+### 8.4 Logging
+
+The library SHALL NOT log secret values. Only paths (not values) may appear in error messages.
+
+## 9. Comparison with JSON Format
 
 | Aspect | JSON Format | TOML Format |
 |--------|-------------|-------------|
@@ -466,29 +674,40 @@ The library SHALL NOT log secret values. If logging is implemented, only paths (
 | Human editing | Error-prone (brackets, commas) | Straightforward |
 | File size | Smaller (no key repetition) | Larger (full paths repeated) |
 | Parsing complexity | Standard JSON | Standard TOML |
+| Dependencies | `json` (stdlib) | `tomllib` (Python 3.11+ stdlib) |
 
-## 9. Dependencies
+## 10. Dependencies
 
-The library SHALL depend on:
-- Python 3.9+ (for modern type hints)
-- A TOML parsing library (e.g., `tomllib` from Python 3.11+ stdlib, or `tomli` for earlier versions)
+**Runtime Dependencies:**
+- Python 3.11+ (for `tomllib` standard library module)
+- No external packages required
 
-## 10. Module Structure
+**Development Dependencies (optional):**
+- `pytest` for testing
+- `pytest-cov` for coverage
+
+## 11. Module Structure
 
 ```
 home_secret_toml/
 ├── __init__.py          # Package initialization, exports public API
 ├── api.py               # Public API exports
-└── home_secret_toml.py  # Core implementation
+├── cli.py               # CLI entry point (calls main() from home_secret_toml.py)
+├── paths.py             # Path constants
+└── home_secret_toml.py  # Core implementation (self-contained, can be copied standalone)
 ```
 
-## 11. Public API Summary
+## 12. Public API Summary
 
-The following symbols SHALL be exported as the public API:
+The following symbols are exported as the public API:
 
 | Symbol | Type | Description |
 |--------|------|-------------|
 | `HomeSecretToml` | Class | Main interface for loading and accessing secrets |
 | `Token` | Class | Lazy-loading reference to a secret value |
 | `hs` | Instance | Pre-configured global HomeSecretToml instance |
-| `gen_enum_code` | Function | Generate Python enum code from current secrets |
+| `gen_enum_code` | Function | Low-level function to generate Python enum code |
+| `generate_enum` | Function | High-level function to generate enum file with error handling |
+| `list_secrets` | Function | List all secrets with masked values |
+| `mask_value` | Function | Mask a secret value for safe display |
+| `walk` | Function | Traverse nested dict and yield leaf paths/values |
