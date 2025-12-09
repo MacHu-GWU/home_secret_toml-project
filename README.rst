@@ -50,7 +50,13 @@ Welcome to ``home_secret_toml`` Documentation
 .. image:: https://home-secret-toml.readthedocs.io/en/latest/_static/home_secret_toml-logo.png
     :target: https://home-secret-toml.readthedocs.io/en/latest/
 
-Documentation for ``home_secret_toml``.
+Modern software development presents an increasingly complex credential management challenge. As cloud services proliferate and microservice architectures become standard, developers face exponential growth in sensitive information requiring secure storage and convenient access—API keys, database credentials, authentication tokens, and service endpoints.
+
+This complexity creates a fundamental tension: developers need immediate access to credentials during development while maintaining rigorous security standards. Traditional approaches, from hardcoded secrets to scattered environment variables, fail to address the sophisticated demands of contemporary multi-platform, multi-account development workflows.
+
+The consequences of inadequate credential management extend beyond inconvenience. Security breaches, development inefficiencies, and maintenance nightmares plague teams using fragmented approaches. What developers need is a systematic solution that unifies security, accessibility, and scalability into a coherent framework.
+
+HOME Secret emerges as a response to these challenges—a comprehensive local credential management system built on structured `TOML <https://toml.io/en/>`_ configuration and intelligent Python integration. This approach transforms credential management from a necessary evil into a streamlined development asset.
 
 
 .. _install:
