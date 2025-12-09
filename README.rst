@@ -56,7 +56,22 @@ This complexity creates a fundamental tension: developers need immediate access 
 
 The consequences of inadequate credential management extend beyond inconvenience. Security breaches, development inefficiencies, and maintenance nightmares plague teams using fragmented approaches. What developers need is a systematic solution that unifies security, accessibility, and scalability into a coherent framework.
 
-HOME Secret emerges as a response to these challenges—a comprehensive local credential management system built on structured `TOML <https://toml.io/en/>`_ configuration and intelligent Python integration. This approach transforms credential management from a necessary evil into a streamlined development asset.
+HOME Secret TOML emerges as a response to these challenges—a comprehensive local credential management system built on structured `TOML <https://toml.io/en/>`_ configuration and intelligent Python integration. Unlike nested JSON structures, TOML's **flat key-value format** provides immediate context visibility in every line, making secrets easy to navigate and edit. This approach transforms credential management from a necessary evil into a streamlined development asset.
+
+**Key Features**
+
+- **Flat Key Structure**: Every secret is a single line with full path context—no nested brackets to manage
+- **Comment Support**: Native ``#`` comments for documentation directly in the secrets file
+- **Zero Dependencies**: Uses only Python 3.11+ standard library (``tomllib``)
+- **Dual Usage**: Copy single file to your project OR ``pip install`` as a package
+- **CLI Tool**: ``hst ls`` to list secrets, ``hst gen-enum`` to generate IDE autocomplete code
+- **IDE Support**: Generated enum classes provide full autocomplete and type checking
+
+**Quick Links**
+
+- `Comprehensive Document <https://github.com/MacHu-GWU/home_secret_toml-project/blob/main/home-secret-toml-a-unified-approach-to-local-development-credential-management.md>`_
+- `Home secret TOML core source code <https://github.com/MacHu-GWU/home_secret_toml-project/blob/main/home_secret_toml/home_secret_toml.py>`_
+- `Sample home_secret.toml file <https://github.com/MacHu-GWU/home_secret_toml-project/blob/main/home_secret_toml/home_secret.toml>`_
 
 
 .. _install:
@@ -75,3 +90,61 @@ To upgrade to latest version:
 .. code-block:: console
 
     $ pip install --upgrade home-secret-toml
+
+
+Quick Start
+------------------------------------------------------------------------------
+
+1. Create ``~/home_secret.toml`` with your secrets:
+
+.. code-block:: toml
+
+    # GitHub credentials
+    github.accounts.personal.account_id = "myuser"
+    github.accounts.personal.users.dev.secrets.api_token.value = "ghp_xxxxxxxxxxxx"
+
+    # AWS credentials
+    aws.accounts.prod.secrets.deploy.creds = { access_key = "AKIA...", secret_key = "xxxx" }
+
+2. Access secrets in Python:
+
+.. code-block:: python
+
+    from home_secret_toml import hs
+
+    # Direct value access
+    api_key = hs.v("github.accounts.personal.users.dev.secrets.api_token.value")
+
+    # Token-based (lazy) access
+    token = hs.t("github.accounts.personal.users.dev.secrets.api_token.value")
+    api_key = token.v  # Resolved when accessed
+
+3. Use CLI to explore and generate code:
+
+.. code-block:: console
+
+    # List all secrets (values are masked)
+    $ hst ls
+    github.accounts.personal.account_id = "***"
+    github.accounts.personal.users.dev.secrets.api_token.value = "gh***xx"
+
+    # Filter secrets
+    $ hst ls --query "github personal"
+
+    # Generate enum file for IDE autocomplete
+    $ hst gen-enum
+
+
+Single-File Usage (No pip install)
+------------------------------------------------------------------------------
+
+For projects where you want zero dependencies, simply copy ``home_secret_toml.py`` to your project:
+
+.. code-block:: python
+
+    # Copy the file and import directly
+    from home_secret_toml import hs
+
+    api_key = hs.v("github.accounts.personal.users.dev.secrets.api_token.value")
+
+Requirements: Python 3.11+ (for built-in ``tomllib`` module)
