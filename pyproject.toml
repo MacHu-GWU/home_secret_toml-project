@@ -24,7 +24,7 @@ maintainers = [
 ]
 keywords = []
 readme = "README.rst"
-requires-python = ">=3.11,<4.0"
+requires-python = ">=3.10,<4.0"
 # Full list of classifiers: https://pypi.org/classifiers/
 classifier = [
     "Development Status :: 4 - Beta",
@@ -43,6 +43,7 @@ classifier = [
 # Core Dependencies
 # ------------------------------------------------------------------------------
 dependencies = [
+    "tomli>=2.0.0,<3.0.0; python_version < '3.11'"
 ]
 
 # ------------------------------------------------------------------------------

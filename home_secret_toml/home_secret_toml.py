@@ -51,7 +51,11 @@ You can also specify a custom path when creating a HomeSecretToml instance.
 import typing as T
 import sys
 import argparse
-import tomllib
+
+try:
+    import tomllib
+except ImportError:  # pragma: no cover
+    import tomli as tomllib
 import textwrap
 import dataclasses
 from pathlib import Path
@@ -445,7 +449,11 @@ def list_secrets(
     if query:
         facets = _parse_query_facets(query)
         if facets:
-            results = [(key, value) for key, value in results if _matches_all_facets(key, facets)]
+            results = [
+                (key, value)
+                for key, value in results
+                if _matches_all_facets(key, facets)
+            ]
 
     return [(key, mask_value(value)) for key, value in results]
 
