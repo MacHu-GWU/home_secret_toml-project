@@ -6,7 +6,10 @@ Pytest configuration and fixtures for home_secret_toml tests.
 
 import typing as T
 import pytest
-import tomllib
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib
 from pathlib import Path
 
 from home_secret_toml.paths import path_enum
