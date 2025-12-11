@@ -22,6 +22,7 @@ x.y.z (Backlog)
 - Added Python 3.10 and 3.14 support, expanding compatibility across more Python versions.
 - Added ``tomli`` as a dependency for Python <3.11 to provide TOML parsing support for older Python versions that don't have built-in ``tomllib``.
 
+**Miscellaneous**
 
 - Updated CI workflow to test against full OS and Python version matrix.
 
