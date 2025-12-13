@@ -315,6 +315,35 @@ Automatic code generation represents HOME Secret TOML's most innovative feature,
 
 HOME Secret TOML provides a powerful CLI tool (`hst`) for managing secrets from the command line:
 
+**Get Secret Value**:
+
+```bash
+# Get a secret value by key (outputs to stdout)
+$ hst get github.accounts.personal.users.dev.secrets.api_token.value
+ghp_xxxxxxxxxxxx
+
+# Alternative: use --key option
+$ hst get --key github.accounts.personal.users.dev.secrets.api_token.value
+
+# Capture into shell variable (recommended for security)
+$ export TOKEN=$(hst get github.accounts.personal.users.dev.secrets.api_token.value)
+
+# Copy to clipboard instead of printing (macOS/Linux)
+$ hst get github.accounts.personal.users.dev.secrets.api_token.value -c
+Copied to clipboard.
+
+# No trailing newline (useful for piping)
+$ hst get github.accounts.personal.users.dev.secrets.api_token.value -n
+
+# Use custom secrets file
+$ hst get my.secret.key --path /path/to/secrets.toml
+```
+
+The `hst get` command is designed for secure secret retrieval:
+- Output goes to stdout, so it can be captured in variables without displaying on screen
+- Shell history only records the command (with the key path), not the secret value
+- Use `-c/--clipboard` to copy directly to clipboard without any terminal output
+
 **List Secrets with Masking**:
 
 ```bash
@@ -495,7 +524,7 @@ Key differentiators of the TOML approach:
 - **Native Comments**: Document your secrets in-place
 - **Zero Dependencies**: Python 3.11+ standard library only
 - **Dual Usage**: Copy single file OR pip install as package
-- **Powerful CLI**: `hst ls` and `hst gen-enum` for exploration and code generation
+- **Powerful CLI**: `hst get` for retrieving secrets, `hst ls` for exploration, `hst gen-enum` for code generation
 
 For developers and organizations seeking systematic credential management solutions, HOME Secret TOML offers an immediately deployable, battle-tested approach. Its architecture accommodates diverse requirements from individual developers to large enterprise teams while scaling naturally with organizational growth.
 
