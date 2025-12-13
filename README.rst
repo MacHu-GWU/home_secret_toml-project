@@ -71,7 +71,7 @@ HOME Secret TOML emerges as a response to these challenges—a comprehensive loc
 
 - `Comprehensive Document <https://github.com/MacHu-GWU/home_secret_toml-project/blob/main/home-secret-toml-a-unified-approach-to-local-development-credential-management.md>`_
 - `Home secret TOML core source code <https://github.com/MacHu-GWU/home_secret_toml-project/blob/main/home_secret_toml/home_secret_toml.py>`_
-- `Sample home_secret.toml file <https://github.com/MacHu-GWU/home_secret_toml-project/blob/main/home_secret_toml/home_secret.toml>`_
+- `Sample home_secret.toml file <https://github.com/MacHu-GWU/home_secret_toml-project/blob/main/tests/fixtures/home_secret.toml>`_
 
 
 .. _install:

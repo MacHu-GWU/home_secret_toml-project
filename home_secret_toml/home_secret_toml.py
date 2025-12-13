@@ -485,6 +485,95 @@ def cmd_ls(
         print(f'{key} = "{masked_value}"')
 
 
+def get_secret(
+    key: str,
+    path: Path | None = None,
+) -> T.Any:
+    """
+    Get a secret value by its key.
+
+    This is the underlying function for the ``hst get`` command.
+
+    :param key: Dot-separated path to the secret value (e.g., "github.accounts.personal.token")
+    :param path: Path to the TOML secrets file. Defaults to $HOME/home_secret.toml
+
+    :raises FileNotFoundError: If the secrets file does not exist
+    :raises KeyError: If the key does not exist in the secrets file
+
+    :return: The secret value
+    """
+    if path is None:
+        path = p_home_secret
+
+    hs_instance = HomeSecretToml(path=path)
+    return hs_instance.v(key)
+
+
+def cmd_get(
+    key: str,
+    path: Path | None = None,
+    clipboard: bool = False,
+    no_newline: bool = False,
+) -> None:  # pragma: no cover
+    """
+    CLI wrapper for get_secret. Prints result to stdout or copies to clipboard.
+
+    :param key: Dot-separated path to the secret value
+    :param path: Path to the TOML secrets file. Defaults to $HOME/home_secret.toml
+    :param clipboard: If True, copy to clipboard instead of printing
+    :param no_newline: If True, don't print trailing newline
+    """
+    try:
+        value = get_secret(key=key, path=path)
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except KeyError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Convert value to string for output
+    if isinstance(value, str):
+        output = value
+    else:
+        # For non-string values (dict, list, etc.), use repr
+        output = repr(value)
+
+    if clipboard:
+        try:
+            import subprocess
+
+            # Try pbcopy (macOS) first, then xclip (Linux)
+            if sys.platform == "darwin":
+                subprocess.run(
+                    ["pbcopy"],
+                    input=output.encode("utf-8"),
+                    check=True,
+                )
+            else:
+                # Try xclip for Linux
+                subprocess.run(
+                    ["xclip", "-selection", "clipboard"],
+                    input=output.encode("utf-8"),
+                    check=True,
+                )
+            print("Copied to clipboard.", file=sys.stderr)
+        except FileNotFoundError:
+            print(
+                "Error: Clipboard tool not found (pbcopy on macOS, xclip on Linux)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        except subprocess.CalledProcessError:
+            print("Error: Failed to copy to clipboard", file=sys.stderr)
+            sys.exit(1)
+    else:
+        if no_newline:
+            print(output, end="")
+        else:
+            print(output)
+
+
 def generate_enum(
     path: Path | None = None,
     output: Path | None = None,
@@ -572,6 +661,43 @@ def main() -> None:  # pragma: no cover
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
+    # get subcommand
+    get_parser = subparsers.add_parser(
+        "get",
+        help="Get a secret value by key",
+    )
+    get_parser.add_argument(
+        "key",
+        nargs="?",
+        default=None,
+        help="Dot-separated path to the secret (e.g., github.accounts.personal.token)",
+    )
+    get_parser.add_argument(
+        "--key",
+        dest="key_opt",
+        type=str,
+        default=None,
+        help="Alternative: specify key as --key option",
+    )
+    get_parser.add_argument(
+        "--path",
+        type=Path,
+        default=None,
+        help="Path to the TOML secrets file. Defaults to ~/home_secret.toml",
+    )
+    get_parser.add_argument(
+        "-c",
+        "--clipboard",
+        action="store_true",
+        help="Copy to clipboard instead of printing to stdout",
+    )
+    get_parser.add_argument(
+        "-n",
+        "--no-newline",
+        action="store_true",
+        help="Don't print trailing newline",
+    )
+
     # ls subcommand
     ls_parser = subparsers.add_parser(
         "ls",
@@ -618,6 +744,18 @@ def main() -> None:  # pragma: no cover
     if args.command is None:
         parser.print_help()
         sys.exit(0)
+    elif args.command == "get":
+        # Support both positional and --key option
+        key = args.key if args.key else args.key_opt
+        if not key:
+            print("Error: key is required. Use: hst get <key> or hst get --key <key>", file=sys.stderr)
+            sys.exit(1)
+        cmd_get(
+            key=key,
+            path=args.path,
+            clipboard=args.clipboard,
+            no_newline=args.no_newline,
+        )
     elif args.command == "ls":
         cmd_ls(path=args.path, query=args.query)
     elif args.command == "gen-enum":
