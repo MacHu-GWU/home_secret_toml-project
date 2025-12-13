@@ -24,6 +24,7 @@ from home_secret_toml.home_secret_toml import (
     gen_enum_code,
     mask_value,
     list_secrets,
+    get_secret,
     generate_enum,
     UNKNOWN,
     DESCRIPTION,
@@ -558,6 +559,67 @@ class Test_list_secrets:
         """Test that list_secrets raises FileNotFoundError for missing file."""
         with pytest.raises(FileNotFoundError):
             list_secrets(path=Path("/nonexistent/path/secrets.toml"))
+
+
+class Test_get_secret:
+    """Tests for the get_secret function."""
+
+    def test_get_secret_returns_value(self, home_secret_path: Path):
+        """Test that get_secret returns the correct value for a key."""
+        value = get_secret(key="github.accounts.personal.account_id", path=home_secret_path)
+        assert value == "user123"
+
+    def test_get_secret_with_various_types(self, home_secret_path: Path):
+        """Test get_secret with different value types."""
+        # String value
+        assert get_secret(key="github.accounts.personal.admin_email", path=home_secret_path) == "admin@example.com"
+
+        # Integer value
+        assert get_secret(key="db.mysql_dev.port", path=home_secret_path) == 3306
+
+        # Boolean value
+        assert get_secret(key="db.mysql_dev.ssl_enabled", path=home_secret_path) is True
+
+    def test_get_secret_with_inline_table(self, home_secret_path: Path):
+        """Test get_secret with inline table (dict) value."""
+        creds = get_secret(
+            key="aws.accounts.prod.secrets.deployment.creds",
+            path=home_secret_path,
+        )
+        assert isinstance(creds, dict)
+        assert creds["access_key"] == "AKIAIOSFODNN7EXAMPLE"
+        assert creds["secret_key"] == "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+
+    def test_get_secret_key_not_found(self, home_secret_path: Path):
+        """Test that get_secret raises KeyError for missing key."""
+        with pytest.raises(KeyError) as exc_info:
+            get_secret(key="nonexistent.key", path=home_secret_path)
+        assert "nonexistent" in str(exc_info.value)
+
+    def test_get_secret_partial_key_not_found(self, home_secret_path: Path):
+        """Test that get_secret raises KeyError for partially matching key."""
+        with pytest.raises(KeyError) as exc_info:
+            get_secret(key="github.accounts.personal.nonexistent", path=home_secret_path)
+        assert "nonexistent" in str(exc_info.value)
+
+    def test_get_secret_file_not_found(self):
+        """Test that get_secret raises FileNotFoundError for missing file."""
+        with pytest.raises(FileNotFoundError):
+            get_secret(key="any.key", path=Path("/nonexistent/path/secrets.toml"))
+
+    def test_get_secret_default_path(self):
+        """Test that get_secret uses default path when not specified."""
+        # This test verifies the function signature works with default path
+        # We can't actually test the default path without the real file
+        # Just verify the function accepts no path argument
+        try:
+            get_secret(key="any.key")
+        except FileNotFoundError:
+            # Expected if ~/home_secret.toml doesn't exist
+            pass
+        except KeyError:
+            # Expected if file exists but key doesn't
+            pass
 
 
 class Test_generate_enum:
