@@ -61,7 +61,7 @@ import dataclasses
 from pathlib import Path
 from functools import cached_property
 
-__version__ = "0.1.1"
+__version__ = "0.2.1"
 __license__ = "MIT"
 __author__ = "Sanhe Hu"
 
